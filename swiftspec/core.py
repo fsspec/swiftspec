@@ -2,9 +2,9 @@ import os
 from urllib.parse import urlparse
 from hashlib import md5
 
-from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
+from fsspec.asyn import sync_wrapper
 from fsspec.implementations.http import HTTPFileSystem
-import aiohttp
+from fsspec.utils import tokenize
 
 import logging
 
@@ -143,7 +143,7 @@ class SWIFTFileSystem(HTTPFileSystem):
                 swift_res_to_info(
                     f"swift://{ref.host}/{ref.account}/{ref.container}/", entry
                 )
-                for entry in await res.json()
+                for entry in resdata
             ]
         if detail:
             return info
@@ -160,7 +160,7 @@ class SWIFTFileSystem(HTTPFileSystem):
         )
 
     async def _get_file(self, rpath, lpath, **kwargs):
-        ref = SWIFTRef(path)
+        ref = SWIFTRef(rpath)
         headers = self.headers_for_url(ref.http_url)
         return await super()._get_file(
             ref.http_url, lpath=lpath, headers=headers, **kwargs
@@ -175,7 +175,7 @@ class SWIFTFileSystem(HTTPFileSystem):
         if size > 5 * 2 ** 30:  # 5 GB is maximum PUT size for swift
             raise NotImplementedError("large objects are not implemented")
             # see https://docs.openstack.org/swift/latest/api/large_objects.html#static-large-objects
-            # and https://docs.openstack.org/api-ref/object-store/?expanded=show-object-metadata-detail,create-or-replace-object-detail#create-or-replace-object
+            # and https://docs.openstack.org/api-ref/object-store
 
         url = ref.http_url
         headers = self.headers_for_url(url)
@@ -189,7 +189,7 @@ class SWIFTFileSystem(HTTPFileSystem):
             res.raise_for_status()
 
     async def _put_file(self, lpath, rpath, **kwargs):
-        ref = SWIFTRef(path)
+        ref = SWIFTRef(rpath)
         headers = self.headers_for_url(ref.http_url)
         kwargs = {**kwargs, "method": "put"}
         return await super()._put_file(
@@ -217,9 +217,10 @@ class SWIFTFileSystem(HTTPFileSystem):
         return super()._open(ref.http_url, *args, **kwargs)
 
     def ukey(self, path):
-        return tokenize(url, self.kwargs, self.info(path)["ETag"])
+        return tokenize(path, self.kwargs, self.info(path)["ETag"])
 
     async def _info(self, path, **kwargs):
+        ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
         kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
         return await super()._info(ref.http_url, **kwargs)

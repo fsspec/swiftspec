@@ -1,4 +1,3 @@
-import pytest
 from contextlib import asynccontextmanager
 import json
 import re

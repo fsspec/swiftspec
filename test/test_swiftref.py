@@ -31,7 +31,7 @@ def test_parse_container(url):
     assert ref.host == "server"
     assert ref.account == "a"
     assert ref.container == "c"
-    assert ref.object == None
+    assert ref.object is None
     assert ref.http_url == "https://server/v1/a/c"
 
 
