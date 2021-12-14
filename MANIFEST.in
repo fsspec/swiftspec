@@ -1,0 +1,2 @@
+include versioneer.py
+include swiftspec/_version.py
