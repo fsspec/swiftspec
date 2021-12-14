@@ -21,14 +21,14 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3',
+    python_requires=">=3",
     install_requires=[
         "fsspec>=0.9.0",
         "aiohttp",
     ],
     entry_points={
-        'fsspec.specs': [
-            'swift=swiftspec.SWIFTFileSystem',
+        "fsspec.specs": [
+            "swift=swiftspec.SWIFTFileSystem",
         ],
     },
 )

@@ -22,20 +22,25 @@ class SWIFTRef:
         elif parts.scheme == "https":
             split_parts = parts.path.split("/", 4)[2:]
         else:
-            raise ValueError("unknown SWIFT url scheme '{}' in '{}'".format(parts.scheme, ref))
+            raise ValueError(
+                "unknown SWIFT url scheme '{}' in '{}'".format(parts.scheme, ref)
+            )
         split_parts += [None, None]
         self.account = split_parts[0]
         self.container = split_parts[1] or None
         self.object = split_parts[2] or None
-            
+
     @property
     def http_url(self):
         if self.object:
-            return f"https://{self.host}/v1/{self.account}/{self.container}/{self.object}"
+            return (
+                f"https://{self.host}/v1/{self.account}/{self.container}/{self.object}"
+            )
         elif self.container:
             return f"https://{self.host}/v1/{self.account}/{self.container}"
         else:
             return f"https://{self.host}/v1/{self.account}"
+
 
 def swift_res_to_info(prefix, res):
     if "subdir" in res:
@@ -44,26 +49,40 @@ def swift_res_to_info(prefix, res):
         return {"name": prefix + name[:-1], "size": None, "type": "directory"}
     else:
         name = res["name"]
-        extra_attrs = {k: v for k, v in res.items() if k not in {"bytes", "name", "size", "type"}}
-        return {"name": prefix + name,
-                "size": res["bytes"],
-                "type": "file",
-                **extra_attrs}
+        extra_attrs = {
+            k: v for k, v in res.items() if k not in {"bytes", "name", "size", "type"}
+        }
+        return {
+            "name": prefix + name,
+            "size": res["bytes"],
+            "type": "file",
+            **extra_attrs,
+        }
 
 
 class SWIFTFileSystem(HTTPFileSystem):
     protocol = "swift"
     sep = "/"
 
-    def __init__(self, auth=None, block_size=None, asynchronous=False, loop=None, client_kwargs=None, **storage_options):
+    def __init__(
+        self,
+        auth=None,
+        block_size=None,
+        asynchronous=False,
+        loop=None,
+        client_kwargs=None,
+        **storage_options,
+    ):
         self.auth = (auth or []) + self.get_tokens_from_env()
-        super().__init__(simple_links=False,
-                         block_size=block_size,
-                         same_scheme=True,
-                         asynchronous=asynchronous,
-                         loop=loop,
-                         client_kwargs=client_kwargs,
-                         **storage_options)
+        super().__init__(
+            simple_links=False,
+            block_size=block_size,
+            same_scheme=True,
+            asynchronous=asynchronous,
+            loop=loop,
+            client_kwargs=client_kwargs,
+            **storage_options,
+        )
 
     def get_tokens_from_env(self):
         token = os.environ.get("OS_AUTH_TOKEN")
@@ -89,10 +108,19 @@ class SWIFTFileSystem(HTTPFileSystem):
                 "format": "json",
             }
             url = f"https://{ref.host}/v1/{ref.account}"
-            async with session.get(url, params=params, headers=self.headers_for_url(url)) as res:
+            async with session.get(
+                url, params=params, headers=self.headers_for_url(url)
+            ) as res:
                 res.raise_for_status()
                 resdata = await res.json()
-            info = [{"name": f"swift://{ref.host}/{ref.account}/" + e["name"], "size": e["bytes"], "type": "directory"} for e in await res.json()]
+            info = [
+                {
+                    "name": f"swift://{ref.host}/{ref.account}/" + e["name"],
+                    "size": e["bytes"],
+                    "type": "directory",
+                }
+                for e in await res.json()
+            ]
         else:
             if ref.object:
                 prefix = ref.object
@@ -106,10 +134,17 @@ class SWIFTFileSystem(HTTPFileSystem):
                 "prefix": prefix,
             }
             url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
-            async with session.get(url, params=params, headers=self.headers_for_url(url)) as res:
+            async with session.get(
+                url, params=params, headers=self.headers_for_url(url)
+            ) as res:
                 res.raise_for_status()
                 resdata = await res.json()
-            info = [swift_res_to_info(f"swift://{ref.host}/{ref.account}/{ref.container}/", entry) for entry in await res.json()]
+            info = [
+                swift_res_to_info(
+                    f"swift://{ref.host}/{ref.account}/{ref.container}/", entry
+                )
+                for entry in await res.json()
+            ]
         if detail:
             return info
         else:
@@ -120,12 +155,16 @@ class SWIFTFileSystem(HTTPFileSystem):
     async def _cat_file(self, path, start=None, end=None, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
-        return await super()._cat_file(ref.http_url, start=start, end=end, headers=headers, **kwargs)
+        return await super()._cat_file(
+            ref.http_url, start=start, end=end, headers=headers, **kwargs
+        )
 
     async def _get_file(self, rpath, lpath, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
-        return await super()._get_file(ref.http_url, lpath=lpath, headers=headers, **kwargs)
+        return await super()._get_file(
+            ref.http_url, lpath=lpath, headers=headers, **kwargs
+        )
 
     async def _pipe_file(self, path, data, chunksize=50 * 2 ** 20, **kwargs):
         print(f"PIPE {path}")
@@ -141,7 +180,9 @@ class SWIFTFileSystem(HTTPFileSystem):
         url = ref.http_url
         headers = self.headers_for_url(url)
         headers["Content-Length"] = str(size)
-        headers["ETag"] = md5(data).hexdigest()  # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
+        headers["ETag"] = md5(
+            data
+        ).hexdigest()  # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
 
         session = await self.set_session()
         async with session.put(url, data=data, headers=headers) as res:
@@ -151,20 +192,22 @@ class SWIFTFileSystem(HTTPFileSystem):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
         kwargs = {**kwargs, "method": "put"}
-        return await super()._put_file(lpath=lpath, rpath=ref.http_url, headers=headers, **kwargs)
+        return await super()._put_file(
+            lpath=lpath, rpath=ref.http_url, headers=headers, **kwargs
+        )
 
     async def _exists(self, path, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
         kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
-        #TODO: maybe better API call
+        # TODO: maybe better API call
         return await super()._exists(ref.http_url, **kwargs)
 
     async def _isfile(self, path, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
         kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
-        #TODO: maybe better API call
+        # TODO: maybe better API call
         return await super()._isfile(ref.http_url, **kwargs)
 
     def _open(self, path, *args, **kwargs):

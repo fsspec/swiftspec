@@ -6,6 +6,7 @@ from hashlib import md5
 
 from swiftspec import SWIFTFileSystem
 
+
 class MockResponse:
     def __init__(self, status, content):
         self.status = status
@@ -18,6 +19,7 @@ class MockResponse:
         if self.status != 200:
             raise RuntimeError(f"status {self.status}")
 
+
 class Router:
     def __init__(self, routes):
         self.routes = [(re.compile(route), handler) for route, handler in routes]
@@ -28,6 +30,7 @@ class Router:
                 return getattr(handler(**kwargs), method)(**m.groupdict())
         else:
             return MockResponse(404, "not found")
+
 
 class MockClient:
     def __init__(self, router, data):
@@ -45,6 +48,7 @@ class MockClient:
     async def close(self):
         pass
 
+
 def create_mock_data():
     return {
         "a1": {
@@ -54,9 +58,11 @@ def create_mock_data():
         }
     }
 
+
 class SWIFTHandler:
     def __init__(self, data):
         self.data = data
+
 
 class AccountHandler(SWIFTHandler):
     def get(self, account):
@@ -65,9 +71,12 @@ class AccountHandler(SWIFTHandler):
                 "count": len(v),
                 "bytes": None,
                 "name": k,
-                "last_modified": "2016-04-29T16:23:50.460230"
-            } for k, v in self.data[account].items()]
+                "last_modified": "2016-04-29T16:23:50.460230",
+            }
+            for k, v in self.data[account].items()
+        ]
         return MockResponse(200, json.dumps(containers))
+
 
 class ContainerHandler(SWIFTHandler):
     def get(self, account, container):
@@ -77,15 +86,20 @@ class ContainerHandler(SWIFTHandler):
                 "last_modified": "2014-01-15T16:41:49.390270",
                 "bytes": len(v),
                 "name": k,
-                "content_type": "application/octet-stream"
-            } for k, v in self.data[account][container].items()]
+                "content_type": "application/octet-stream",
+            }
+            for k, v in self.data[account][container].items()
+        ]
         return MockResponse(200, json.dumps(objects))
 
+
 async def get_client(**kwargs):
-    router = Router([
-        ("^/v1/(?P<account>[^/]+)$", AccountHandler),
-        ("^/v1/(?P<account>[^/]+)/(?P<container>[^/]+)$", ContainerHandler),
-    ])
+    router = Router(
+        [
+            ("^/v1/(?P<account>[^/]+)$", AccountHandler),
+            ("^/v1/(?P<account>[^/]+)/(?P<container>[^/]+)$", ContainerHandler),
+        ]
+    )
     data = create_mock_data()
     return MockClient(router, data)
 
