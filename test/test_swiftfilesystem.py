@@ -1,6 +1,6 @@
-from contextlib import asynccontextmanager
 import json
 import re
+from contextlib import asynccontextmanager
 from hashlib import md5
 
 from swiftspec import SWIFTFileSystem
@@ -25,7 +25,8 @@ class Router:
 
     def __call__(self, url, method, **kwargs):
         for pattern, handler in self.routes:
-            if m := pattern.match(url):
+            m = pattern.match(url)
+            if m:
                 return getattr(handler(**kwargs), method)(**m.groupdict())
         else:
             return MockResponse(404, "not found")
