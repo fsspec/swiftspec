@@ -3,19 +3,48 @@ import re
 from contextlib import asynccontextmanager
 from hashlib import md5
 
+import pytest
+
 from swiftspec import SWIFTFileSystem
+
+RANGE_RE = re.compile("bytes=([0-9]*)-([0-9]*)")
+
+
+def range_to_slice(range_header):
+    m = RANGE_RE.match(range_header)
+    if not m:
+        raise ValueError(f"could not parse range: '{range_header}'")
+    start = m.group(1)
+    end = m.group(2)
+    if start:
+        start = int(start)
+        if end:
+            end = int(end)
+            return slice(start, end)
+        else:
+            return slice(start, None)
+    else:
+        if end:
+            end = int(end)
+            return slice(-end, None)
+        else:
+            raise ValueError(f"invalid range: '{range_header}'")
 
 
 class MockResponse:
-    def __init__(self, status, content):
+    def __init__(self, status, content, headers=None):
         self.status = status
         self.content = content
+        self.headers = headers or {}
+
+    async def read(self):
+        return self.content
 
     async def json(self):
         return json.loads(self.content)
 
     def raise_for_status(self):
-        if self.status != 200:
+        if self.status // 100 != 2:
             raise RuntimeError(f"status {self.status}")
 
 
@@ -33,17 +62,28 @@ class Router:
 
 
 class MockClient:
-    def __init__(self, router, data):
+    def __init__(self, router, store):
         self.router = router
-        self.data = data
+        self.store = store
 
     @asynccontextmanager
-    async def get(self, url, params=None, headers=None):
+    async def _method(self, method, url, params=None, headers=None, data=None):
         protocol, _, host, path = url.split("/", 3)
         assert protocol == "https:"
         params = params or {}
         headers = headers or {}
-        yield self.router("/" + path, "get", data=self.data)
+        yield self.router(
+            "/" + path, method, store=self.store, headers=headers, data=data
+        )
+
+    def get(self, url, params=None, headers=None):
+        return self._method("get", url, params, headers)
+
+    def head(self, url, params=None, headers=None):
+        return self._method("head", url, params, headers)
+
+    def put(self, url, params=None, headers=None, data=None):
+        return self._method("put", url, params, headers, data)
 
     async def close(self):
         pass
@@ -60,7 +100,9 @@ def create_mock_data():
 
 
 class SWIFTHandler:
-    def __init__(self, data):
+    def __init__(self, store, headers, data):
+        self.store = store
+        self.headers = headers
         self.data = data
 
 
@@ -73,7 +115,7 @@ class AccountHandler(SWIFTHandler):
                 "name": k,
                 "last_modified": "2016-04-29T16:23:50.460230",
             }
-            for k, v in self.data[account].items()
+            for k, v in self.store[account].items()
         ]
         return MockResponse(200, json.dumps(containers))
 
@@ -88,9 +130,38 @@ class ContainerHandler(SWIFTHandler):
                 "name": k,
                 "content_type": "application/octet-stream",
             }
-            for k, v in self.data[account][container].items()
+            for k, v in self.store[account][container].items()
         ]
         return MockResponse(200, json.dumps(objects))
+
+
+class ObjectHandler(SWIFTHandler):
+    def get(self, account, container, obj):
+        try:
+            data = self.store[account][container][obj]
+        except KeyError:
+            return MockResponse(404, "not found")
+
+        if "Range" in self.headers:
+            data = data[range_to_slice(self.headers["Range"])]
+
+        headers = {
+            "Content-Length": str(len(data)),
+            "Etag": md5(data).hexdigest(),
+        }
+        return MockResponse(200, data, headers=headers)
+
+    def head(self, account, container, obj):
+        res = self.get(account, container, obj)
+        return MockResponse(res.status, b"", headers=res.headers)
+
+    def put(self, account, container, obj):
+        if "Content-Length" not in self.headers:
+            return MockResponse(411, "length required")
+        length = int(self.headers["Content-Length"])
+        assert len(self.data) == length
+        self.store[account][container][obj] = self.data
+        return MockResponse(201, "created")
 
 
 async def get_client(**kwargs):
@@ -98,24 +169,59 @@ async def get_client(**kwargs):
         [
             ("^/v1/(?P<account>[^/]+)$", AccountHandler),
             ("^/v1/(?P<account>[^/]+)/(?P<container>[^/]+)$", ContainerHandler),
+            (
+                "^/v1/(?P<account>[^/]+)/(?P<container>[^/]+)/(?P<obj>.+)$",
+                ObjectHandler,
+            ),
         ]
     )
     data = create_mock_data()
     return MockClient(router, data)
 
 
-def test_ls_account():
-    fs = SWIFTFileSystem(get_client=get_client)
+@pytest.fixture
+def fs():
+    return SWIFTFileSystem(get_client=get_client)
+
+
+def test_ls_account(fs):
     res = fs.ls("swift://server/a1")
     assert len(res) == 1
     assert res[0]["name"] == "swift://server/a1/c1"
     assert res[0]["type"] == "directory"
 
 
-def test_ls_container():
-    fs = SWIFTFileSystem(get_client=get_client)
+def test_ls_container(fs):
     res = fs.ls("swift://server/a1/c1")
     assert len(res) == 1
     assert res[0]["name"] == "swift://server/a1/c1/hello"
     assert res[0]["type"] == "file"
     assert res[0]["size"] == len(b"Hello World")
+
+
+def test_cat(fs):
+    assert fs.cat("swift://server/a1/c1/hello") == b"Hello World"
+
+
+def test_cat_partial(fs):
+    assert fs.cat("swift://server/a1/c1/hello", start=3, end=5) == b"lo"
+
+
+EXIST_CASES = [
+    ("swift://server/a1/c1/hello", True, False),
+    ("swift://server/a1/c1/not_there", False, False),
+    ("swift://server/a1/c1", False, True),
+    ("swift://server/a1/c1/", False, True),
+]
+
+
+@pytest.mark.parametrize("path,is_file,is_dir", EXIST_CASES)
+def test_exists(path, is_file, is_dir, fs):
+    assert fs.exists(path) == (is_file or is_dir)
+    assert fs.isfile(path) == is_file
+    assert fs.isdir(path) == is_dir
+
+
+def test_pipe(fs):
+    fs.pipe("swift://server/a1/c1/foo", b"bar")
+    assert fs._session.store["a1"]["c1"]["foo"] == b"bar"

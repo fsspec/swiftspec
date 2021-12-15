@@ -23,7 +23,7 @@ setuptools.setup(
     ],
     python_requires=">=3.7",
     install_requires=[
-        "fsspec[http]>=0.9.0",
+        "fsspec>=0.9.0",
         "aiohttp",
     ],
     entry_points={

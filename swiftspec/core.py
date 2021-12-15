@@ -1,16 +1,21 @@
-import os
-from urllib.parse import urlparse
-from hashlib import md5
-
-from fsspec.asyn import sync_wrapper
-from fsspec.implementations.http import HTTPFileSystem
-from fsspec.utils import tokenize
-
 import logging
+import os
+import weakref
+from hashlib import md5
+from urllib.parse import urlparse
+
+import aiohttp
+from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
+from fsspec.exceptions import FSTimeoutError
+from fsspec.utils import tokenize
 
 logger = logging.getLogger("swiftspec")
 
 MAX_RETRIES = 2
+
+
+async def get_client(**kwargs):
+    return aiohttp.ClientSession(**kwargs)
 
 
 class SWIFTRef:
@@ -41,6 +46,15 @@ class SWIFTRef:
         else:
             return f"https://{self.host}/v1/{self.account}"
 
+    @property
+    def swift_url(self):
+        if self.object:
+            return f"swift://{self.host}/{self.account}/{self.container}/{self.object}"
+        elif self.container:
+            return f"swift://{self.host}/{self.account}/{self.container}"
+        else:
+            return f"swift://{self.host}/{self.account}"
+
 
 def swift_res_to_info(prefix, res):
     if "subdir" in res:
@@ -60,7 +74,7 @@ def swift_res_to_info(prefix, res):
         }
 
 
-class SWIFTFileSystem(HTTPFileSystem):
+class SWIFTFileSystem(AsyncFileSystem):
     protocol = "swift"
     sep = "/"
 
@@ -70,19 +84,41 @@ class SWIFTFileSystem(HTTPFileSystem):
         block_size=None,
         asynchronous=False,
         loop=None,
+        get_client=get_client,
         client_kwargs=None,
         **storage_options,
     ):
         self.auth = (auth or []) + self.get_tokens_from_env()
         super().__init__(
-            simple_links=False,
             block_size=block_size,
-            same_scheme=True,
             asynchronous=asynchronous,
             loop=loop,
-            client_kwargs=client_kwargs,
             **storage_options,
         )
+
+        self.get_client = get_client
+        self.client_kwargs = client_kwargs or {}
+        self._session = None
+
+    @staticmethod
+    def close_session(loop, session):
+        if loop is not None and loop.is_running():
+            try:
+                sync(loop, session.close, timeout=0.1)
+                return
+            except (TimeoutError, FSTimeoutError):
+                pass
+        connector = getattr(session, "_connector", None)
+        if connector is not None:
+            # close after loop is dead
+            connector._close()
+
+    async def set_session(self):
+        if self._session is None:
+            self._session = await self.get_client(loop=self.loop, **self.client_kwargs)
+            if not self.asynchronous:
+                weakref.finalize(self, self.close_session, self.loop, self._session)
+        return self._session
 
     def get_tokens_from_env(self):
         token = os.environ.get("OS_AUTH_TOKEN")
@@ -99,6 +135,11 @@ class SWIFTFileSystem(HTTPFileSystem):
                 headers["X-Auth-Token"] = auth["token"]
                 break
         return headers
+
+    @classmethod
+    def _strip_protocol(cls, path):
+        """For SWIFT, we always want to keep the full URL"""
+        return path
 
     async def _ls(self, path, detail=True, **kwargs):
         ref = SWIFTRef(path)
@@ -155,16 +196,22 @@ class SWIFTFileSystem(HTTPFileSystem):
     async def _cat_file(self, path, start=None, end=None, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
-        return await super()._cat_file(
-            ref.http_url, start=start, end=end, headers=headers, **kwargs
-        )
+        if start is not None:
+            assert start >= 0
+            if end is not None:
+                assert end >= 0
+                headers["Range"] = f"bytes={start}-{end}"
+            else:
+                headers["Range"] = f"bytes={start}-"
+        else:
+            if end is not None:
+                assert end >= 0
+                headers["Range"] = f"bytes=0-{end}"
 
-    async def _get_file(self, rpath, lpath, **kwargs):
-        ref = SWIFTRef(rpath)
-        headers = self.headers_for_url(ref.http_url)
-        return await super()._get_file(
-            ref.http_url, lpath=lpath, headers=headers, **kwargs
-        )
+        session = await self.set_session()
+        async with session.get(ref.http_url, headers=headers) as res:
+            res.raise_for_status()
+            return await res.read()
 
     async def _pipe_file(self, path, data, chunksize=50 * 2 ** 20, **kwargs):
         print(f"PIPE {path}")
@@ -188,28 +235,6 @@ class SWIFTFileSystem(HTTPFileSystem):
         async with session.put(url, data=data, headers=headers) as res:
             res.raise_for_status()
 
-    async def _put_file(self, lpath, rpath, **kwargs):
-        ref = SWIFTRef(rpath)
-        headers = self.headers_for_url(ref.http_url)
-        kwargs = {**kwargs, "method": "put"}
-        return await super()._put_file(
-            lpath=lpath, rpath=ref.http_url, headers=headers, **kwargs
-        )
-
-    async def _exists(self, path, **kwargs):
-        ref = SWIFTRef(path)
-        headers = self.headers_for_url(ref.http_url)
-        kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
-        # TODO: maybe better API call
-        return await super()._exists(ref.http_url, **kwargs)
-
-    async def _isfile(self, path, **kwargs):
-        ref = SWIFTRef(path)
-        headers = self.headers_for_url(ref.http_url)
-        kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
-        # TODO: maybe better API call
-        return await super()._isfile(ref.http_url, **kwargs)
-
     def _open(self, path, *args, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
@@ -221,6 +246,21 @@ class SWIFTFileSystem(HTTPFileSystem):
 
     async def _info(self, path, **kwargs):
         ref = SWIFTRef(path)
+        if not ref.object:
+            return {
+                "name": ref.swift_url,
+                "type": "directory",
+                "size": None,
+            }
         headers = self.headers_for_url(ref.http_url)
-        kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
-        return await super()._info(ref.http_url, **kwargs)
+        session = await self.set_session()
+        async with session.head(ref.http_url, headers=headers) as res:
+            if res.status != 200:
+                raise FileNotFoundError(f"file '{ref.swift_url}' not found")
+            info = {
+                "name": ref.swift_url,
+                "type": "file",
+                "size": int(res.headers["Content-Length"]),
+                "Etag": res.headers["Etag"],
+            }
+        return info
