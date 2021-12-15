@@ -214,7 +214,6 @@ class SWIFTFileSystem(AsyncFileSystem):
             return await res.read()
 
     async def _pipe_file(self, path, data, chunksize=50 * 2 ** 20, **kwargs):
-        print(f"PIPE {path}")
         ref = SWIFTRef(path)
         size = len(data)
         if not ref.object:
