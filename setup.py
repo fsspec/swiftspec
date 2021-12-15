@@ -21,7 +21,7 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3",
+    python_requires=">=3.7",
     install_requires=[
         "fsspec[http]>=0.9.0",
         "aiohttp",
