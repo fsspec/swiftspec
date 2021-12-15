@@ -1,6 +1,6 @@
 import setuptools
-import versioneer
 
+import versioneer
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
@@ -23,7 +23,7 @@ setuptools.setup(
     ],
     python_requires=">=3",
     install_requires=[
-        "fsspec>=0.9.0",
+        "fsspec[http]>=0.9.0",
         "aiohttp",
     ],
     entry_points={
