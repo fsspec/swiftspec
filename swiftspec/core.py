@@ -86,6 +86,7 @@ class SWIFTFileSystem(AsyncFileSystem):
         loop=None,
         get_client=get_client,
         client_kwargs=None,
+        verify_uploads=True,
         **storage_options,
     ):
         self.auth = (auth or []) + self.get_tokens_from_env()
@@ -98,6 +99,7 @@ class SWIFTFileSystem(AsyncFileSystem):
 
         self.get_client = get_client
         self.client_kwargs = client_kwargs or {}
+        self.verify_uploads = verify_uploads
         self._session = None
 
     @staticmethod
@@ -226,9 +228,9 @@ class SWIFTFileSystem(AsyncFileSystem):
         url = ref.http_url
         headers = self.headers_for_url(url)
         headers["Content-Length"] = str(size)
-        headers["ETag"] = md5(
-            data
-        ).hexdigest()  # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
+        if self.verify_uploads:
+            # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
+            headers["ETag"] = md5(data).hexdigest()
 
         session = await self.set_session()
         async with session.put(url, data=data, headers=headers) as res:
