@@ -160,6 +160,8 @@ class ObjectHandler(SWIFTHandler):
             return MockResponse(411, "length required")
         length = int(self.headers["Content-Length"])
         assert len(self.data) == length
+        if "Etag" in self.headers:
+            assert self.headers["Etag"] == md5(self.data).hexdigest()
         self.store[account][container][obj] = self.data
         return MockResponse(201, "created")
 
