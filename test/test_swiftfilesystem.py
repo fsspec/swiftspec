@@ -241,3 +241,17 @@ def test_pipe(fs):
 def test_rm(fs):
     fs.rm("swift://server/a1/c1/hello")
     assert "hello" not in fs._session.store["a1"]["c1"]
+
+
+def test_open_read(fs):
+    with fs.open("swift://server/a1/c1/hello", "r") as f:
+        assert f.read() == "Hello World"
+
+    with fs.open("swift://server/a1/c1/hello", "rb") as f:
+        assert f.read() == b"Hello World"
+
+
+def test_open_write(fs):
+    with fs.open("swift://server/a1/c1/w", "wb") as f:
+        f.write(b"write test")
+    assert fs._session.store["a1"]["c1"]["w"] == b"write test"

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import aiohttp
 from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
 from fsspec.exceptions import FSTimeoutError
+from fsspec.spec import AbstractBufferedFile
 from fsspec.utils import tokenize
 
 logger = logging.getLogger("swiftspec")
@@ -72,6 +73,21 @@ def swift_res_to_info(prefix, res):
             "type": "file",
             **extra_attrs,
         }
+
+
+class SWIFTFile(AbstractBufferedFile):
+    def _upload_chunk(self, final=False):
+        if not final:
+            raise NotImplementedError(
+                "currently only single chunk uploads are implemented"
+            )
+        self.buffer.seek(0)
+        self.fs.pipe_file(self.path, self.buffer.read())
+        return True
+
+    def _fetch_range(self, start, end):
+        """Get the specified set of bytes from remote"""
+        return self.fs.cat_file(self.path, start, end)
 
 
 class SWIFTFileSystem(AsyncFileSystem):
@@ -245,11 +261,25 @@ class SWIFTFileSystem(AsyncFileSystem):
         async with session.delete(ref.http_url, headers=headers) as res:
             res.raise_for_status()
 
-    def _open(self, path, *args, **kwargs):
-        ref = SWIFTRef(path)
-        headers = self.headers_for_url(ref.http_url)
-        kwargs = {**kwargs, "headers": {**kwargs.get("headers", {}), **headers}}
-        return super()._open(ref.http_url, *args, **kwargs)
+    def _open(
+        self,
+        path,
+        mode="rb",
+        block_size=None,
+        autocommit=True,
+        cache_options=None,
+        **kwargs,
+    ):
+        """Return raw bytes-mode file-like from the file-system"""
+        return SWIFTFile(
+            self,
+            path,
+            mode,
+            block_size,
+            autocommit,
+            cache_options=cache_options,
+            **kwargs,
+        )
 
     def ukey(self, path):
         return tokenize(path, self.kwargs, self.info(path)["ETag"])
