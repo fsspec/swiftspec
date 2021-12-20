@@ -191,7 +191,8 @@ async def get_client(**kwargs):
 
 @pytest.fixture
 def fs():
-    return SWIFTFileSystem(get_client=get_client)
+    yield SWIFTFileSystem(get_client=get_client)
+    SWIFTFileSystem.clear_instance_cache()
 
 
 def test_ls_account(fs):
