@@ -85,6 +85,9 @@ class MockClient:
     def put(self, url, params=None, headers=None, data=None):
         return self._method("put", url, params, headers, data)
 
+    def delete(self, url, params=None, headers=None, data=None):
+        return self._method("delete", url, params, headers, data)
+
     async def close(self):
         pass
 
@@ -165,6 +168,11 @@ class ObjectHandler(SWIFTHandler):
         self.store[account][container][obj] = self.data
         return MockResponse(201, "created")
 
+    def delete(self, account, container, obj):
+        if obj in self.store[account][container]:
+            del self.store[account][container][obj]
+        return MockResponse(204, "no content")
+
 
 async def get_client(**kwargs):
     router = Router(
@@ -227,3 +235,8 @@ def test_exists(path, is_file, is_dir, fs):
 def test_pipe(fs):
     fs.pipe("swift://server/a1/c1/foo", b"bar")
     assert fs._session.store["a1"]["c1"]["foo"] == b"bar"
+
+
+def test_rm(fs):
+    fs.rm("swift://server/a1/c1/hello")
+    assert "hello" not in fs._session.store["a1"]["c1"]

@@ -236,6 +236,15 @@ class SWIFTFileSystem(AsyncFileSystem):
         async with session.put(url, data=data, headers=headers) as res:
             res.raise_for_status()
 
+    async def _rm_file(self, path, **kwargs):
+        ref = SWIFTRef(path)
+        if not ref.object:
+            raise NotImplementedError("currently rm is only implemented for objects")
+        headers = self.headers_for_url(ref.http_url)
+        session = await self.set_session()
+        async with session.delete(ref.http_url, headers=headers) as res:
+            res.raise_for_status()
+
     def _open(self, path, *args, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
