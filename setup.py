@@ -14,7 +14,7 @@ setuptools.setup(
     description="fsspec implementation for OpenStack SWIFT",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/d70-t/swiftspec",
+    url="https://github.com/fsspec/swiftspec",
     packages=setuptools.find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
