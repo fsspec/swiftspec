@@ -211,6 +211,14 @@ class SWIFTFileSystem(AsyncFileSystem):
 
     ls = sync_wrapper(_ls)
 
+    def _raise_not_found_for_status(self, response, ref):
+        """
+        Raises FileNotFoundError for 404s, otherwise uses raise_for_status.
+        """
+        if response.status == 404:
+            raise FileNotFoundError(ref.swift_url)
+        response.raise_for_status()
+
     async def _cat_file(self, path, start=None, end=None, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
@@ -228,7 +236,7 @@ class SWIFTFileSystem(AsyncFileSystem):
 
         session = await self.set_session()
         async with session.get(ref.http_url, headers=headers) as res:
-            res.raise_for_status()
+            self._raise_not_found_for_status(res, ref)
             return await res.read()
 
     async def _pipe_file(self, path, data, chunksize=50 * 2 ** 20, **kwargs):

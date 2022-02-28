@@ -214,6 +214,11 @@ def test_cat(fs):
     assert fs.cat("swift://server/a1/c1/hello") == b"Hello World"
 
 
+def test_cat_raises_not_found(fs):
+    with pytest.raises(FileNotFoundError):
+        assert fs.cat("swift://server/a1/c1/doesnt_exist")
+
+
 def test_cat_partial(fs):
     assert fs.cat("swift://server/a1/c1/hello", start=3, end=5) == b"lo"
 
