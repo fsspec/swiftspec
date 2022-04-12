@@ -295,6 +295,12 @@ def test_rm_recursive(fs):
     assert "foo/x/baz" not in fs._session.store["a1"]["c1"]
 
 
+def test_rmdir_raises(fs):
+    with pytest.raises(OSError):
+        # empty directores can't exist on SWIFT
+        fs.rmdir("swift://server/a1/c1/test")
+
+
 def test_expand_path(fs):
     fs.pipe("swift://server/a1/c1/foo/x/bar", b"bar")
     fs.pipe("swift://server/a1/c1/foo/x/baz", b"bar")

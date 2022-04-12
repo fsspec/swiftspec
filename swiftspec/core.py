@@ -281,6 +281,11 @@ class SWIFTFileSystem(AsyncFileSystem):
             nofiles=True,
         )
 
+    def rmdir(self, path):
+        raise OSError(
+            "empty directories can't exist on SWIFT, this method can't succeed"
+        )
+
     def _open(
         self,
         path,
