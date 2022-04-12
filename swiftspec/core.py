@@ -5,7 +5,7 @@ from hashlib import md5
 from urllib.parse import urlparse
 
 import aiohttp
-from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
+from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
 from fsspec.exceptions import FSTimeoutError
 from fsspec.spec import AbstractBufferedFile
 from fsspec.utils import tokenize
@@ -260,14 +260,26 @@ class SWIFTFileSystem(AsyncFileSystem):
         async with session.put(url, data=data, headers=headers) as res:
             res.raise_for_status()
 
-    async def _rm_file(self, path, **kwargs):
+    async def _rm_file(self, path, missing_is_ok=False, **kwargs):
         ref = SWIFTRef(path)
         if not ref.object:
             raise NotImplementedError("currently rm is only implemented for objects")
         headers = self.headers_for_url(ref.http_url)
         session = await self.set_session()
         async with session.delete(ref.http_url, headers=headers) as res:
-            res.raise_for_status()
+            if missing_is_ok and res.status == 404:
+                return
+            self._raise_not_found_for_status(res, ref)
+
+    async def _rm(self, path, recursive=False, batch_size=None, **kwargs):
+        # TODO: implement on_error
+        batch_size = batch_size or self.batch_size
+        path = await self._expand_path(path, recursive=recursive)
+        return await _run_coros_in_chunks(
+            [self._rm_file(p, missing_is_ok=recursive, **kwargs) for p in path],
+            batch_size=batch_size,
+            nofiles=True,
+        )
 
     def _open(
         self,
