@@ -73,7 +73,12 @@ class MockClient:
         params = params or {}
         headers = headers or {}
         yield self.router(
-            "/" + path, method, store=self.store, headers=headers, data=data
+            "/" + path,
+            method,
+            store=self.store,
+            headers=headers,
+            params=params,
+            data=data,
         )
 
     def get(self, url, params=None, headers=None):
@@ -103,9 +108,10 @@ def create_mock_data():
 
 
 class SWIFTHandler:
-    def __init__(self, store, headers, data):
+    def __init__(self, store, headers, params, data):
         self.store = store
         self.headers = headers
+        self.params = params
         self.data = data
 
 
@@ -125,6 +131,7 @@ class AccountHandler(SWIFTHandler):
 
 class ContainerHandler(SWIFTHandler):
     def get(self, account, container):
+        prefix = self.params.get("prefix", "")
         objects = [
             {
                 "hash": md5(v).hexdigest(),
@@ -134,7 +141,21 @@ class ContainerHandler(SWIFTHandler):
                 "content_type": "application/octet-stream",
             }
             for k, v in self.store[account][container].items()
+            if k.startswith(prefix)
         ]
+        if "delimiter" in self.params:
+            delimiter = self.params["delimiter"]
+            keep = len(prefix)
+            files = []
+            folders = set()
+            for o in objects:
+                rest = o["name"][keep:]
+                if delimiter in rest:
+                    folders.add(prefix + rest.split(delimiter)[0])
+                else:
+                    files.append(o)
+            objects = files + [{"subdir": k + delimiter} for k in folders]
+
         return MockResponse(200, json.dumps(objects))
 
 
@@ -171,6 +192,8 @@ class ObjectHandler(SWIFTHandler):
     def delete(self, account, container, obj):
         if obj in self.store[account][container]:
             del self.store[account][container][obj]
+        else:
+            return MockResponse(404, "not found")
         return MockResponse(204, "no content")
 
 
@@ -210,6 +233,15 @@ def test_ls_container(fs):
     assert res[0]["size"] == len(b"Hello World")
 
 
+def test_ls_object(fs):
+    fs.pipe("swift://server/a1/c1/foo/x/bar", b"bar")
+    fs.pipe("swift://server/a1/c1/foo/x/baz", b"bar")
+    res = fs.ls("swift://server/a1/c1/foo")
+    assert len(res) == 1
+    assert res[0]["name"] == "swift://server/a1/c1/foo/x"
+    assert res[0]["type"] == "directory"
+
+
 def test_cat(fs):
     assert fs.cat("swift://server/a1/c1/hello") == b"Hello World"
 
@@ -246,6 +278,37 @@ def test_pipe(fs):
 def test_rm(fs):
     fs.rm("swift://server/a1/c1/hello")
     assert "hello" not in fs._session.store["a1"]["c1"]
+
+
+def test_rm_nonexistent_raises(fs):
+    with pytest.raises(FileNotFoundError):
+        fs.rm("swift://server/a1/c1/doesnt_exist")
+
+
+def test_rm_recursive(fs):
+    fs.pipe("swift://server/a1/c1/foo/x/bar", b"bar")
+    fs.pipe("swift://server/a1/c1/foo/x/baz", b"bar")
+    assert fs._session.store["a1"]["c1"]["foo/x/bar"] == b"bar"
+    assert fs._session.store["a1"]["c1"]["foo/x/baz"] == b"bar"
+    fs.rm("swift://server/a1/c1/foo", recursive=True)
+    assert "foo/x/bar" not in fs._session.store["a1"]["c1"]
+    assert "foo/x/baz" not in fs._session.store["a1"]["c1"]
+
+
+def test_rmdir_raises(fs):
+    with pytest.raises(OSError):
+        # empty directores can't exist on SWIFT
+        fs.rmdir("swift://server/a1/c1/test")
+
+
+def test_expand_path(fs):
+    fs.pipe("swift://server/a1/c1/foo/x/bar", b"bar")
+    fs.pipe("swift://server/a1/c1/foo/x/baz", b"bar")
+    assert set(fs.expand_path("swift://server/a1/c1/foo/", recursive=True)) == {
+        "swift://server/a1/c1/foo/x",
+        "swift://server/a1/c1/foo/x/bar",
+        "swift://server/a1/c1/foo/x/baz",
+    }
 
 
 def test_open_read(fs):
