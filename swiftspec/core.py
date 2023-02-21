@@ -117,6 +117,7 @@ class SWIFTFileSystem(AsyncFileSystem):
         self.client_kwargs = client_kwargs or {}
         self.verify_uploads = verify_uploads
         self._session = None
+        self.kwargs = storage_options
 
     @staticmethod
     def close_session(loop, session):
