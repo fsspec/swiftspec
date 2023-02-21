@@ -282,7 +282,7 @@ class SWIFTFileSystem(AsyncFileSystem):
         )
 
     async def _get_file(self, rpath, lpath, **kwargs):
-        if self.isdir(rpath):
+        if await self._isdir(rpath):
             return os.makedirs(lpath, exist_ok=True)
         data = await self._cat_file(rpath)
         with open(lpath, "wb") as f:
