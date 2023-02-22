@@ -102,6 +102,7 @@ def create_mock_data():
         "a1": {
             "c1": {
                 "hello": b"Hello World",
+                "hello2": b"Hello World2",
             },
         }
     }
@@ -227,7 +228,7 @@ def test_ls_account(fs):
 
 def test_ls_container(fs):
     res = fs.ls("swift://server/a1/c1")
-    assert len(res) == 1
+    assert len(res) == 2
     assert res[0]["name"] == "swift://server/a1/c1/hello"
     assert res[0]["type"] == "file"
     assert res[0]["size"] == len(b"Hello World")
@@ -323,3 +324,14 @@ def test_open_write(fs):
     with fs.open("swift://server/a1/c1/w", "wb") as f:
         f.write(b"write test")
     assert fs._session.store["a1"]["c1"]["w"] == b"write test"
+
+
+def test_ukey(fs):
+    assert fs.ukey("swift://server/a1/c1/hello") != fs.ukey(
+        "swift://server/a1/c1/hello2"
+    )
+    assert fs.ukey("swift://server/a1/c1/hello") != fs.ukey("swift://server/a1/c1")
+    oldkey = fs.ukey("swift://server/a1/c1/hello")
+    fs.pipe("swift://server/a1/c1/hello", b"test")
+    newkey = fs.ukey("swift://server/a1/c1/hello")
+    assert oldkey != newkey
