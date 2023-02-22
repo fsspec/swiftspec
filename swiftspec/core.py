@@ -239,12 +239,12 @@ class SWIFTFileSystem(AsyncFileSystem):
             self._raise_not_found_for_status(res, ref)
             return await res.read()
 
-    async def _pipe_file(self, path, data, chunksize=50 * 2 ** 20, **kwargs):
+    async def _pipe_file(self, path, data, chunksize=50 * 2**20, **kwargs):
         ref = SWIFTRef(path)
         size = len(data)
         if not ref.object:
             raise ValueError("given path is not an object")
-        if size > 5 * 2 ** 30:  # 5 GB is maximum PUT size for swift
+        if size > 5 * 2**30:  # 5 GB is maximum PUT size for swift
             raise NotImplementedError("large objects are not implemented")
             # see https://docs.openstack.org/swift/latest/api/large_objects.html#static-large-objects
             # and https://docs.openstack.org/api-ref/object-store

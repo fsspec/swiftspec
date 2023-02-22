@@ -1,4 +1,5 @@
 import pytest
+
 from swiftspec.core import SWIFTRef, swift_res_to_info
 
 object_test_urls = [
