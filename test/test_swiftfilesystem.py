@@ -275,6 +275,12 @@ def test_pipe(fs):
     assert fs._session.store["a1"]["c1"]["foo"] == b"bar"
 
 
+def test_get(fs, tmp_path):
+    fs.get("swift://server/a1/c1/hello", str(tmp_path / "hello"))
+    with open(tmp_path / "hello", "rb") as local_copy:
+        assert local_copy.read() == b"Hello World"
+
+
 def test_rm(fs):
     fs.rm("swift://server/a1/c1/hello")
     assert "hello" not in fs._session.store["a1"]["c1"]
