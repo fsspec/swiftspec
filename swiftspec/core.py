@@ -281,6 +281,13 @@ class SWIFTFileSystem(AsyncFileSystem):
             nofiles=True,
         )
 
+    async def _get_file(self, rpath, lpath, **kwargs):
+        if await self._isdir(rpath):
+            return os.makedirs(lpath, exist_ok=True)
+        data = await self._cat_file(rpath)
+        with open(lpath, "wb") as f:
+            f.write(data)
+
     def rmdir(self, path):
         raise OSError(
             "empty directories can't exist on SWIFT, this method can't succeed"
