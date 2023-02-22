@@ -307,7 +307,7 @@ class SWIFTFileSystem(AsyncFileSystem):
         )
 
     def ukey(self, path):
-        return tokenize(path, self.kwargs, self.info(path)["ETag"])
+        return tokenize(path, self.info(path).get("hash", "-"))
 
     async def _info(self, path, **kwargs):
         ref = SWIFTRef(path)
@@ -326,6 +326,6 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "name": ref.swift_url,
                 "type": "file",
                 "size": int(res.headers["Content-Length"]),
-                "Etag": res.headers["Etag"],
+                "hash": res.headers["Etag"],
             }
         return info
