@@ -182,8 +182,9 @@ class SWIFTFileSystem(AsyncFileSystem):
             params = {
                 "format": "json",
             }
-            params.update(params_for_url(url))
             url = f"https://{ref.host}/v1/{ref.account}"
+            params.update(self.params_for_url(url))
+
             async with session.get(
                 url, params=params, headers=self.headers_for_url(url)
             ) as res:
@@ -209,9 +210,9 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "delimiter": "/",
                 "prefix": prefix,
             }
-            params.update(params_for_url(url))
-
             url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
+            params.update(self.params_for_url(url))
+
             async with session.get(
                 url, params=params, headers=self.headers_for_url(url)
             ) as res:
