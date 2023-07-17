@@ -142,17 +142,33 @@ class SWIFTFileSystem(AsyncFileSystem):
         token = os.environ.get("OS_AUTH_TOKEN")
         url = os.environ.get("OS_STORAGE_URL")
         if token and url:
-            return [{"token": token, "url": url}]
+            return [{"X-Auth-Token": token, "url": url}]
+
+        sig = os.environ.get("TEMP_URL_SIG")
+        expire = os.environ.get("TEMP_URL_EXPIRES")
+        prf = os.environ.get("TEMP_URL_PREFIX")
+
+        if url and sig and expire:
+            return [{"url":url,"temp_url_sig": sig, "temp_url_expires": expire, "temp_url_prefix":prf}]
         else:
             return []
 
     def headers_for_url(self, url):
         headers = {}
         for auth in self.auth:
-            if url.startswith(auth["url"]):
-                headers["X-Auth-Token"] = auth["token"]
+            if url.startswith(auth["url"]) and "X-Auth-Token" in auth:
+                headers["X-Auth-Token"]=auth["X-Auth-Token"]
                 break
         return headers
+
+    def params_for_url(self, url):
+        params = {}
+        for auth in self.auth:
+            if url.startswith(auth["url"]) and "temp_url_sig" in auth:
+                params=auth.copy()
+                del params["url"]
+                break
+        return params
 
     @classmethod
     def _strip_protocol(cls, path):
@@ -166,6 +182,7 @@ class SWIFTFileSystem(AsyncFileSystem):
             params = {
                 "format": "json",
             }
+            params.update(params_for_url(url))
             url = f"https://{ref.host}/v1/{ref.account}"
             async with session.get(
                 url, params=params, headers=self.headers_for_url(url)
@@ -192,6 +209,8 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "delimiter": "/",
                 "prefix": prefix,
             }
+            params.update(params_for_url(url))
+
             url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
             async with session.get(
                 url, params=params, headers=self.headers_for_url(url)
@@ -222,6 +241,7 @@ class SWIFTFileSystem(AsyncFileSystem):
     async def _cat_file(self, path, start=None, end=None, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
+        params = self.params_for_url(ref.http_url)
         if start is not None:
             assert start >= 0
             if end is not None:
@@ -235,7 +255,7 @@ class SWIFTFileSystem(AsyncFileSystem):
                 headers["Range"] = f"bytes=0-{end}"
 
         session = await self.set_session()
-        async with session.get(ref.http_url, headers=headers) as res:
+        async with session.get(ref.http_url, params=params, headers=headers) as res:
             self._raise_not_found_for_status(res, ref)
             return await res.read()
 
@@ -251,13 +271,14 @@ class SWIFTFileSystem(AsyncFileSystem):
 
         url = ref.http_url
         headers = self.headers_for_url(url)
+        params = self.params_for_url(url)
         headers["Content-Length"] = str(size)
         if self.verify_uploads:
             # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
             headers["ETag"] = md5(data).hexdigest()
 
         session = await self.set_session()
-        async with session.put(url, data=data, headers=headers) as res:
+        async with session.put(url, data=data, params=params, headers=headers) as res:
             res.raise_for_status()
 
     async def _rm_file(self, path, missing_is_ok=False, **kwargs):
@@ -325,8 +346,9 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "size": None,
             }
         headers = self.headers_for_url(ref.http_url)
+        params = self.params_for_url(ref.http_url)
         session = await self.set_session()
-        async with session.head(ref.http_url, headers=headers) as res:
+        async with session.head(ref.http_url, params=params, headers=headers) as res:
             if res.status != 200:
                 raise FileNotFoundError(f"file '{ref.swift_url}' not found")
             info = {
