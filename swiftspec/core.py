@@ -142,31 +142,44 @@ class SWIFTFileSystem(AsyncFileSystem):
         token = os.environ.get("OS_AUTH_TOKEN")
         url = os.environ.get("OS_STORAGE_URL")
         if token and url:
-            return [{"X-Auth-Token": token, "url": url}]
+            return [{"token": token, "url": url}]
 
         sig = os.environ.get("TEMP_URL_SIG")
         expire = os.environ.get("TEMP_URL_EXPIRES")
         prf = os.environ.get("TEMP_URL_PREFIX")
 
         if url and sig and expire:
-            return [{"url":url,"temp_url_sig": sig, "temp_url_expires": expire, "temp_url_prefix":prf}]
+            if prf:
+                return [
+                    {
+                        "url": url,
+                        "temp_url_sig": sig,
+                        "temp_url_expires": expire,
+                        "temp_url_prefix": prf,
+                    }
+                ]
+            else:
+                return [{"url": url, "temp_url_sig": sig, "temp_url_expires": expire}]
         else:
             return []
 
     def headers_for_url(self, url):
         headers = {}
         for auth in self.auth:
-            if url.startswith(auth["url"]) and "X-Auth-Token" in auth:
-                headers["X-Auth-Token"]=auth["X-Auth-Token"]
+            if url.startswith(auth["url"]) and "token" in auth:
+                headers["X-Auth-Token"] = auth["token"]
                 break
         return headers
 
     def params_for_url(self, url):
         params = {}
         for auth in self.auth:
-            if url.startswith(auth["url"]) and "temp_url_sig" in auth:
-                params=auth.copy()
-                del params["url"]
+            if (
+                url.startswith(auth["url"])
+                and "temp_url_sig" in auth
+                and "temp_url_expires" in auth
+            ):
+                params = {k: v for k, v in auth.items if k.startswith("temp_url_")}
                 break
         return params
 
