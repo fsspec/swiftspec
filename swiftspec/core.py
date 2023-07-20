@@ -139,10 +139,11 @@ class SWIFTFileSystem(AsyncFileSystem):
         return self._session
 
     def get_tokens_from_env(self):
+        auth = []
         token = os.environ.get("OS_AUTH_TOKEN")
         url = os.environ.get("OS_STORAGE_URL")
         if token and url:
-            return [{"token": token, "url": url}]
+            auth.append({"token": token, "url": url})
 
         sig = os.environ.get("TEMP_URL_SIG")
         expire = os.environ.get("TEMP_URL_EXPIRES")
@@ -150,18 +151,19 @@ class SWIFTFileSystem(AsyncFileSystem):
 
         if url and sig and expire:
             if prf:
-                return [
+                auth.append(
                     {
                         "url": url,
                         "temp_url_sig": sig,
                         "temp_url_expires": expire,
                         "temp_url_prefix": prf,
                     }
-                ]
+                )
             else:
-                return [{"url": url, "temp_url_sig": sig, "temp_url_expires": expire}]
-        else:
-            return []
+                auth.append(
+                    {"url": url, "temp_url_sig": sig, "temp_url_expires": expire}
+                )
+        return auth
 
     def headers_for_url(self, url):
         headers = {}
