@@ -163,25 +163,16 @@ class SWIFTFileSystem(AsyncFileSystem):
         else:
             return []
 
-    def headers_for_url(self, url):
-        headers = {}
+    def headers_and_params_for_url(self, url):
         for auth in self.auth:
-            if url.startswith(auth["url"]) and "token" in auth:
-                headers["X-Auth-Token"] = auth["token"]
-                break
-        return headers
-
-    def params_for_url(self, url):
-        params = {}
-        for auth in self.auth:
-            if (
-                url.startswith(auth["url"])
-                and "temp_url_sig" in auth
-                and "temp_url_expires" in auth
-            ):
-                params = {k: v for k, v in auth.items if k.startswith("temp_url_")}
-                break
-        return params
+            if url.startswith(auth["url"]):
+                if "token" in auth:
+                    return {"X-Auth-Token": auth["token"]}, {}
+                elif "temp_url_sig" in auth and "temp_url_expires" in auth:
+                    return {}, {
+                        k: v for k, v in auth.items if k.startswith("temp_url_")
+                    }
+        return {}, {}
 
     @classmethod
     def _strip_protocol(cls, path):
@@ -192,16 +183,14 @@ class SWIFTFileSystem(AsyncFileSystem):
         ref = SWIFTRef(path)
         session = await self.set_session()
         if not ref.container:
+            url = f"https://{ref.host}/v1/{ref.account}"
+            headers, user_params = self.headers_and_params_for_url(url)
             params = {
+                **user_params,
                 "format": "json",
             }
-            url = f"https://{ref.host}/v1/{ref.account}"
-            user_params = self.params_for_url(url)
-            user_headers = self.headers_for_url(url)
-            if not (user_params and user_headers):
-                params.update(user_params)
 
-            async with session.get(url, params=params, headers=user_headers) as res:
+            async with session.get(url, params=params, headers=headers) as res:
                 res.raise_for_status()
                 resdata = await res.json()
             info = [
@@ -219,18 +208,16 @@ class SWIFTFileSystem(AsyncFileSystem):
                     prefix += "/"
             else:
                 prefix = ""
+            url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
+            headers, user_params = self.headers_and_params_for_url(url)
             params = {
+                **user_params,
                 "format": "json",
                 "delimiter": "/",
                 "prefix": prefix,
             }
-            url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
-            user_params = self.params_for_url(url)
-            user_headers = self.headers_for_url(url)
-            if not (user_params and user_headers):
-                params.update(user_params)
 
-            async with session.get(url, params=params, headers=user_headers) as res:
+            async with session.get(url, params=params, headers=headers) as res:
                 res.raise_for_status()
                 resdata = await res.json()
             info = [
@@ -256,10 +243,7 @@ class SWIFTFileSystem(AsyncFileSystem):
 
     async def _cat_file(self, path, start=None, end=None, **kwargs):
         ref = SWIFTRef(path)
-        headers = self.headers_for_url(ref.http_url)
-        params = self.params_for_url(ref.http_url)
-        if params and headers:
-            params = None
+        headers, params = self.headers_and_params_for_url(ref.http_url)
         if start is not None:
             assert start >= 0
             if end is not None:
@@ -288,10 +272,7 @@ class SWIFTFileSystem(AsyncFileSystem):
             # and https://docs.openstack.org/api-ref/object-store
 
         url = ref.http_url
-        headers = self.headers_for_url(url)
-        params = self.params_for_url(url)
-        if params and headers:
-            params = None
+        headers, params = self.headers_and_params_for_url(url)
 
         headers["Content-Length"] = str(size)
         if self.verify_uploads:
@@ -306,9 +287,9 @@ class SWIFTFileSystem(AsyncFileSystem):
         ref = SWIFTRef(path)
         if not ref.object:
             raise NotImplementedError("currently rm is only implemented for objects")
-        headers = self.headers_for_url(ref.http_url)
+        headers, params = self.headers_and_params_for_url(ref.http_url)
         session = await self.set_session()
-        async with session.delete(ref.http_url, headers=headers) as res:
+        async with session.delete(ref.http_url, params=params, headers=headers) as res:
             if missing_is_ok and res.status == 404:
                 return
             self._raise_not_found_for_status(res, ref)
@@ -366,10 +347,7 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "type": "directory",
                 "size": None,
             }
-        headers = self.headers_for_url(ref.http_url)
-        params = self.params_for_url(ref.http_url)
-        if params and headers:
-            params = None
+        headers, params = self.headers_and_params_for_url(ref.http_url)
         session = await self.set_session()
         async with session.head(ref.http_url, params=params, headers=headers) as res:
             if res.status != 200:
