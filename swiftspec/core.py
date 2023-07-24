@@ -198,11 +198,12 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "format": "json",
             }
             url = f"https://{ref.host}/v1/{ref.account}"
-            params.update(self.params_for_url(url))
+            user_params = self.params_for_url(url)
+            user_headers = self.headers_for_url(url)
+            if not (user_params and user_headers):
+                params.update(user_params)
 
-            async with session.get(
-                url, params=params, headers=self.headers_for_url(url)
-            ) as res:
+            async with session.get(url, params=params, headers=user_headers) as res:
                 res.raise_for_status()
                 resdata = await res.json()
             info = [
@@ -226,11 +227,12 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "prefix": prefix,
             }
             url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
-            params.update(self.params_for_url(url))
+            user_params = self.params_for_url(url)
+            user_headers = self.headers_for_url(url)
+            if not (user_params and user_headers):
+                params.update(user_params)
 
-            async with session.get(
-                url, params=params, headers=self.headers_for_url(url)
-            ) as res:
+            async with session.get(url, params=params, headers=user_headers) as res:
                 res.raise_for_status()
                 resdata = await res.json()
             info = [
@@ -258,6 +260,8 @@ class SWIFTFileSystem(AsyncFileSystem):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
         params = self.params_for_url(ref.http_url)
+        if params and headers:
+            params = None
         if start is not None:
             assert start >= 0
             if end is not None:
@@ -288,6 +292,9 @@ class SWIFTFileSystem(AsyncFileSystem):
         url = ref.http_url
         headers = self.headers_for_url(url)
         params = self.params_for_url(url)
+        if params and headers:
+            params = None
+
         headers["Content-Length"] = str(size)
         if self.verify_uploads:
             # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
@@ -363,6 +370,8 @@ class SWIFTFileSystem(AsyncFileSystem):
             }
         headers = self.headers_for_url(ref.http_url)
         params = self.params_for_url(ref.http_url)
+        if params and headers:
+            params = None
         session = await self.set_session()
         async with session.head(ref.http_url, params=params, headers=headers) as res:
             if res.status != 200:
