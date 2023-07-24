@@ -139,20 +139,51 @@ class SWIFTFileSystem(AsyncFileSystem):
         return self._session
 
     def get_tokens_from_env(self):
+        auth = []
         token = os.environ.get("OS_AUTH_TOKEN")
         url = os.environ.get("OS_STORAGE_URL")
         if token and url:
-            return [{"token": token, "url": url}]
-        else:
-            return []
+            auth.append({"token": token, "url": url})
+
+        sig = os.environ.get("TEMP_URL_SIG")
+        expire = os.environ.get("TEMP_URL_EXPIRES")
+        prf = os.environ.get("TEMP_URL_PREFIX")
+
+        if url and sig and expire:
+            if prf:
+                auth.append(
+                    {
+                        "url": url,
+                        "temp_url_sig": sig,
+                        "temp_url_expires": expire,
+                        "temp_url_prefix": prf,
+                    }
+                )
+            else:
+                auth.append(
+                    {"url": url, "temp_url_sig": sig, "temp_url_expires": expire}
+                )
+        return auth
 
     def headers_for_url(self, url):
         headers = {}
         for auth in self.auth:
-            if url.startswith(auth["url"]):
+            if url.startswith(auth["url"]) and "token" in auth:
                 headers["X-Auth-Token"] = auth["token"]
                 break
         return headers
+
+    def params_for_url(self, url):
+        params = {}
+        for auth in self.auth:
+            if (
+                url.startswith(auth["url"])
+                and "temp_url_sig" in auth
+                and "temp_url_expires" in auth
+            ):
+                params = {k: v for k, v in auth.items if k.startswith("temp_url_")}
+                break
+        return params
 
     @classmethod
     def _strip_protocol(cls, path):
@@ -167,9 +198,12 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "format": "json",
             }
             url = f"https://{ref.host}/v1/{ref.account}"
-            async with session.get(
-                url, params=params, headers=self.headers_for_url(url)
-            ) as res:
+            user_params = self.params_for_url(url)
+            user_headers = self.headers_for_url(url)
+            if not (user_params and user_headers):
+                params.update(user_params)
+
+            async with session.get(url, params=params, headers=user_headers) as res:
                 res.raise_for_status()
                 resdata = await res.json()
             info = [
@@ -193,9 +227,12 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "prefix": prefix,
             }
             url = f"https://{ref.host}/v1/{ref.account}/{ref.container}"
-            async with session.get(
-                url, params=params, headers=self.headers_for_url(url)
-            ) as res:
+            user_params = self.params_for_url(url)
+            user_headers = self.headers_for_url(url)
+            if not (user_params and user_headers):
+                params.update(user_params)
+
+            async with session.get(url, params=params, headers=user_headers) as res:
                 res.raise_for_status()
                 resdata = await res.json()
             info = [
@@ -222,6 +259,9 @@ class SWIFTFileSystem(AsyncFileSystem):
     async def _cat_file(self, path, start=None, end=None, **kwargs):
         ref = SWIFTRef(path)
         headers = self.headers_for_url(ref.http_url)
+        params = self.params_for_url(ref.http_url)
+        if params and headers:
+            params = None
         if start is not None:
             assert start >= 0
             if end is not None:
@@ -235,7 +275,7 @@ class SWIFTFileSystem(AsyncFileSystem):
                 headers["Range"] = f"bytes=0-{end}"
 
         session = await self.set_session()
-        async with session.get(ref.http_url, headers=headers) as res:
+        async with session.get(ref.http_url, params=params, headers=headers) as res:
             self._raise_not_found_for_status(res, ref)
             return await res.read()
 
@@ -251,13 +291,17 @@ class SWIFTFileSystem(AsyncFileSystem):
 
         url = ref.http_url
         headers = self.headers_for_url(url)
+        params = self.params_for_url(url)
+        if params and headers:
+            params = None
+
         headers["Content-Length"] = str(size)
         if self.verify_uploads:
             # in swift, ETag is alwas the MD5sum and will be used by the server to verify the upload
             headers["ETag"] = md5(data).hexdigest()
 
         session = await self.set_session()
-        async with session.put(url, data=data, headers=headers) as res:
+        async with session.put(url, data=data, params=params, headers=headers) as res:
             res.raise_for_status()
 
     async def _rm_file(self, path, missing_is_ok=False, **kwargs):
@@ -325,8 +369,11 @@ class SWIFTFileSystem(AsyncFileSystem):
                 "size": None,
             }
         headers = self.headers_for_url(ref.http_url)
+        params = self.params_for_url(ref.http_url)
+        if params and headers:
+            params = None
         session = await self.set_session()
-        async with session.head(ref.http_url, headers=headers) as res:
+        async with session.head(ref.http_url, params=params, headers=headers) as res:
             if res.status != 200:
                 raise FileNotFoundError(f"file '{ref.swift_url}' not found")
             info = {
